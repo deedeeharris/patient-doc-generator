@@ -2,12 +2,12 @@ import streamlit as st
 from google import genai
 from google.genai import types as genai_types
 import json
-import re # Still useful for safety, though less critical with application/json
+# import re # Less critical with application/json, but can be kept for safety if needed
 from io import BytesIO
 from docxtpl import DocxTemplate
 import os
 
-# --- Gemini API Function (corrected to match YOUR LATEST example) ---
+# --- Gemini API Function (corrected argument for generate_content_stream) ---
 def get_structured_data_from_gemini(api_key: str, user_input_text: str) -> dict:
     """
     Processes natural language patient info using Gemini API (google-genai SDK)
@@ -15,16 +15,12 @@ def get_structured_data_from_gemini(api_key: str, user_input_text: str) -> dict:
     """
     client = genai.Client(api_key=api_key)
 
-    # Model from your LATEST example
-    model_name = "gemini-2.5-flash-preview-05-20"
+    model_name = "gemini-2.5-flash-preview-05-20" # As per your specification
 
-    # Contents structure from your example
-    # The first user/model pair is for few-shot prompting
     contents = [
         genai_types.Content(
             role="user",
             parts=[
-                # Using the example text you provided for the few-shot prompt
                 genai_types.Part.from_text(text="""היי אני ידידיה זהו דוגמא בלבד, כשממיר את הקוד לפונקציה תשאיר את זה עם משתנה, ככה זה יימשך מתוך הצד לקוח
 
 ידידיה בן 40 חולה"""),
@@ -33,7 +29,6 @@ def get_structured_data_from_gemini(api_key: str, user_input_text: str) -> dict:
         genai_types.Content(
             role="model",
             parts=[
-                # Using the example JSON output you provided for the few-shot prompt
                 genai_types.Part.from_text(text="""{
   "name": "ידידיה",
   "age": "40",
@@ -43,22 +38,23 @@ def get_structured_data_from_gemini(api_key: str, user_input_text: str) -> dict:
 }"""),
             ],
         ),
-        genai_types.Content( # This is where the actual user input goes
+        genai_types.Content(
             role="user",
             parts=[
-                genai_types.Part.from_text(text=user_input_text), # Actual patient input
+                genai_types.Part.from_text(text=user_input_text),
             ],
         ),
     ]
 
-    # GenerateContentConfig from your LATEST example
-    generate_content_config = genai_types.GenerateContentConfig(
+    # GenerateContentConfig as per your example
+    # The object itself is named generate_content_config
+    generate_content_config_object = genai_types.GenerateContentConfig(
         temperature=0,
-        thinking_config = genai_types.ThinkingConfig( # Included as per your example
+        thinking_config=genai_types.ThinkingConfig(
             thinking_budget=0,
         ),
-        response_mime_type="application/json", # Crucial change!
-        system_instruction=[ # System instruction as a list of Parts
+        response_mime_type="application/json",
+        system_instruction=[
             genai_types.Part.from_text(text="""system prompt here
 this is the system prompt. act as a patient info analuzer
 analyze the attached user input, and return a json with the relevant fields. always return the fierlds. if the fiels is empty, just retirn it empty.
@@ -76,41 +72,35 @@ here is the user input:"""),
 
     full_response_text = ""
     try:
-        # Using client.models.generate_content_stream as per your LATEST example
-        # The model name is passed directly, without the "models/" prefix here.
+        # Corrected keyword argument: 'config' instead of 'generation_config'
         stream = client.models.generate_content_stream(
-            model=model_name, # e.g., "gemini-2.5-flash-preview-05-20"
+            model=model_name,
             contents=contents,
-            generation_config=generate_content_config,
+            config=generate_content_config_object, # THIS IS THE CORRECTION
         )
         for chunk in stream:
             if chunk.text:
                  full_response_text += chunk.text
         
-        # Since response_mime_type="application/json", full_response_text should be a JSON string
         if not full_response_text.strip():
             raise ValueError("Received empty response from Gemini API.")
 
         data = json.loads(full_response_text)
         
-        # Ensure all expected keys are present, defaulting to empty strings or None
         expected_keys = ["name", "age", "kupat_cholim", "symptoms", "ai_recommondation"]
         for key in expected_keys:
             if key not in data:
-                # Convert age to string if it's a number, as per your example output
-                if key == "age" and data.get(key) is not None:
-                    data[key] = str(data[key])
-                elif key == "age": # if age is missing or None
-                    data[key] = "" # Default to empty string for template
-                else:
-                    data[key] = data.get(key, "") # Use get for other keys, default to ""
-        
-        # Ensure age is a string for consistency with your example output
+                data[key] = ""
+            elif key == "age" and data.get(key) is not None: # Ensure age is string
+                data[key] = str(data[key])
+            elif key == "age" and data.get(key) is None: # Handle None age
+                 data[key] = ""
+
+        # Final check for age, ensuring it's a string
         if "age" in data and data["age"] is not None:
             data["age"] = str(data["age"])
-        elif "age" not in data or data.get("age") is None : # if age is missing or None
-             data["age"] = ""
-
+        elif "age" not in data or data.get("age") is None:
+            data["age"] = ""
 
         return data
 
@@ -118,15 +108,14 @@ here is the user input:"""),
         error_msg = f"JSON Decode Error: {e}. Gemini response: '{full_response_text}'"
         st.error(error_msg)
         return {"error": "Failed to parse JSON from Gemini", "details": error_msg, "name": "", "age": "", "kupat_cholim": "", "symptoms": "", "ai_recommondation": ""}
-    except ValueError as e: # Catching empty response
+    except ValueError as e:
         error_msg = f"Value Error: {e}. Gemini response: '{full_response_text}'"
         st.error(error_msg)
         return {"error": "Invalid data from Gemini", "details": error_msg, "name": "", "age": "", "kupat_cholim": "", "symptoms": "", "ai_recommondation": ""}
     except Exception as e:
-        error_msg = f"Gemini API call error: {type(e).__name__} - {e}. Model: {model_name}. Check if the model is available and the API key is correct."
+        error_msg = f"Gemini API call error: {type(e).__name__} - {e}. Model: {model_name}."
         st.error(error_msg)
-        # You might want to inspect `e.args` or other attributes of the exception for more details from the API
-        if hasattr(e, 'response') and e.response:
+        if hasattr(e, 'response') and e.response: # Check for more detailed API error response
             st.error(f"API Response details: {e.response}")
         return {"error": "Gemini API call failed", "details": error_msg, "name": "", "age": "", "kupat_cholim": "", "symptoms": "", "ai_recommondation": ""}
 
@@ -175,12 +164,17 @@ def main():
     st.subheader("1. Enter Patient Information (Natural Language)")
     patient_info_natural = st.text_area("Describe the patient's details, symptoms, history, etc.:", height=200, key="patient_input_area")
 
+    # For displaying model name in spinner (can be simplified if not needed)
+    # Default model name used in the function
+    model_name_for_display = "gemini-2.5-flash-preview-05-20"
+
+
     if st.button("✨ Generate Structured Data & Document", key="generate_button"):
         if not patient_info_natural.strip():
             st.warning("Please enter some patient information.")
             st.stop()
 
-        with st.spinner(f"Processing with Gemini AI (model: {get_structured_data_from_gemini.__defaults__[0] if get_structured_data_from_gemini.__defaults__ else 'gemini-2.5-flash-preview-05-20'})..."): # Shows model in spinner
+        with st.spinner(f"Processing with Gemini AI (model: {model_name_for_display})..."):
             structured_data = get_structured_data_from_gemini(gemini_api_key, patient_info_natural)
 
         if structured_data and "error" not in structured_data:
@@ -197,7 +191,6 @@ def main():
 
             try:
                 doc = DocxTemplate(template_file)
-                # Ensure age is a string for the template, even if it was a number
                 context = {
                     "name": structured_data.get("name", ""),
                     "age": str(structured_data.get("age", "")), # Ensure age is string
@@ -228,9 +221,4 @@ def main():
             st.error("An unexpected error occurred while fetching data from Gemini.")
 
 if __name__ == "__main__":
-    # To make the model name in spinner work if __main__ is run directly (though not typical for streamlit)
-    # This is a bit of a hack for the spinner text if run directly.
-    # In Streamlit, the function will be called from main().
-    if not get_structured_data_from_gemini.__defaults__:
-         get_structured_data_from_gemini.__defaults__ = ("gemini-2.5-flash-preview-05-20",)
     main()
