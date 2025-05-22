@@ -1,90 +1,66 @@
 import streamlit as st
 from google import genai
-from google.genai import types as genai_types # Using alias as in your example
+from google.genai import types as genai_types
 import json
-import re
+import re # Still useful for safety, though less critical with application/json
 from io import BytesIO
 from docxtpl import DocxTemplate
 import os
 
-# --- Gemini API Function (adapted from YOUR example) ---
+# --- Gemini API Function (corrected to match YOUR LATEST example) ---
 def get_structured_data_from_gemini(api_key: str, user_input_text: str) -> dict:
     """
     Processes natural language patient info using Gemini API (google-genai SDK)
-    and returns structured data. Uses the client and streaming method from your example.
+    and returns structured data. Uses the client.models.generate_content_stream method.
     """
-    try:
-        # The API key is now passed directly to the client, not configured globally first
-        # genai.configure(api_key=api_key) # This is not needed if client takes api_key
-        pass
-    except Exception as e:
-        st.error(f"Error during initial genai setup (if any): {e}")
-        # return {"error": "API configuration failed", "details": str(e)} # No explicit configure step here
-
     client = genai.Client(api_key=api_key)
 
-    # Model from your example
-    model_name = "gemini-2.5-flash-preview-05-20" # Using a generally available model.
-                                          # If "gemini-2.5-flash-preview-05-20" is specifically needed and available, use that.
-                                          # The user's example had "gemini-2.5-flash-preview-05-20"
-                                          # Let's try to use the user's specified model, but have a fallback.
-    try:
-        model_to_use = genai.get_model(f"models/{model_name}") # Check if model exists
-    except Exception:
-        st.warning(f"Model 'models/{model_name}' not found or accessible. Trying 'gemini-1.5-flash-latest'.")
-        model_name = "gemini-1.5-flash-latest" # Fallback
+    # Model from your LATEST example
+    model_name = "gemini-2.5-flash-preview-05-20"
 
     # Contents structure from your example
+    # The first user/model pair is for few-shot prompting
     contents = [
         genai_types.Content(
             role="user",
             parts=[
-                genai_types.Part.from_text(text="""היי שלום אני ידידיה בדיוק הייתי במילואים מלא זמן, אני בן 40 ויש לי כאבים בעיניים, יוצאת לי מוגלה מסוימת, וקשה לי. ראיתי רופא עיניים, הביא לי איזה משהו. אה ויש לי גם כאבי בטן."""),
+                # Using the example text you provided for the few-shot prompt
+                genai_types.Part.from_text(text="""היי אני ידידיה זהו דוגמא בלבד, כשממיר את הקוד לפונקציה תשאיר את זה עם משתנה, ככה זה יימשך מתוך הצד לקוח
+
+ידידיה בן 40 חולה"""),
             ],
         ),
         genai_types.Content(
             role="model",
             parts=[
-                genai_types.Part.from_text(text="""```json
-{
+                # Using the example JSON output you provided for the few-shot prompt
+                genai_types.Part.from_text(text="""{
   "name": "ידידיה",
-  "age": 40,
+  "age": "40",
   "kupat_cholim": "",
-  "symptoms": "כאבים בעיניים, מוגלה מהעיניים, קושי בראייה, כאבי בטן.",
-  "ai_recommondation": "מומלץ לחזור לרופא העיניים אם התסמינים בעיניים לא חלפו או החמירו, ולדווח על כאבי הבטן. ייתכן שיהיה צורך בבדיקה נוספת או הפניה לרופא גסטרואנטרולוג."
-}
-```"""),
+  "symptoms": "חולה",
+  "ai_recommondation": ""
+}"""),
             ],
         ),
         genai_types.Content( # This is where the actual user input goes
             role="user",
             parts=[
-                genai_types.Part.from_text(text=user_input_text), # Replaced "INSERT_INPUT_HERE"
+                genai_types.Part.from_text(text=user_input_text), # Actual patient input
             ],
         ),
     ]
 
-    # GenerateContentConfig from your example
+    # GenerateContentConfig from your LATEST example
     generate_content_config = genai_types.GenerateContentConfig(
         temperature=0,
-        # thinking_config = genai_types.ThinkingConfig( # This might require specific model versions or features
-        #     thinking_budget=0,
-        # ),
-        response_mime_type="text/plain", # Gemini will output JSON within this plain text
-        # System instruction is now part of the model initialization or a specific parameter in generate_content
-        # In the new google-genai, system_instruction is often part of the model object itself.
-        # Let's try to pass it to generate_content if the client.models... structure supports it directly,
-        # or initialize the model with it.
-        # The example `client.models.generate_content_stream` does not show system_instruction in its config.
-        # It's usually part of `genai.GenerativeModel(model_name, system_instruction=...)`
-        # However, your example uses `client.models.generate_content_stream` which is a lower-level API.
-        # Let's add the system prompt as the first "system" role message in `contents` if that's the convention for this client.
-        # Or, more aligned with your example, the system prompt is part of `generate_content_config`.
-    )
-
-    # System instruction from your example
-    system_instruction_parts = [
-            genai_types.Part.from_text(text="""this is the system prompt. act as a patient info analuzer
+        thinking_config = genai_types.ThinkingConfig( # Included as per your example
+            thinking_budget=0,
+        ),
+        response_mime_type="application/json", # Crucial change!
+        system_instruction=[ # System instruction as a list of Parts
+            genai_types.Part.from_text(text="""system prompt here
+this is the system prompt. act as a patient info analuzer
 analyze the attached user input, and return a json with the relevant fields. always return the fierlds. if the fiels is empty, just retirn it empty.
 
 json:
@@ -95,69 +71,64 @@ symptoms
 ai_recommondation:
 
 here is the user input:"""),
-        ]
-    # For client.models.generate_content_stream, system_instruction is part of the config
-    generate_content_config.system_instruction = genai_types.Content(parts=system_instruction_parts, role="system")
-
+        ],
+    )
 
     full_response_text = ""
-    json_string = ""
     try:
-        # Using client.models.generate_content_stream as per your example
-        stream = client.generate_content_stream( # Corrected method name
-            model=f"models/{model_name}", # Model name needs "models/" prefix for client API
+        # Using client.models.generate_content_stream as per your LATEST example
+        # The model name is passed directly, without the "models/" prefix here.
+        stream = client.models.generate_content_stream(
+            model=model_name, # e.g., "gemini-2.5-flash-preview-05-20"
             contents=contents,
             generation_config=generate_content_config,
         )
         for chunk in stream:
-            if chunk.text: # Ensure text exists
+            if chunk.text:
                  full_response_text += chunk.text
+        
+        # Since response_mime_type="application/json", full_response_text should be a JSON string
+        if not full_response_text.strip():
+            raise ValueError("Received empty response from Gemini API.")
 
-        # Extract JSON from the response text
-        # The JSON might be wrapped in ```json ... ``` or be plain.
-        match = re.search(r"```json\s*(\{[\s\S]*?\})\s*```", full_response_text, re.DOTALL)
-        if match:
-            json_string = match.group(1)
-        else:
-            # If not wrapped, assume the whole response is the JSON string (or attempt to find it)
-            json_string = full_response_text.strip()
-            # Basic check if it looks like JSON before parsing
-            if not (json_string.startswith("{") and json_string.endswith("}")):
-                # Try to find a JSON object within the text if it's not clean
-                st.warning(f"Raw response from Gemini was not clean JSON. Attempting to find JSON object. Raw: '{json_string[:500]}...'")
-                json_match_inner = re.search(r"(\{[\s\S]*?\})", json_string)
-                if json_match_inner:
-                    json_string = json_match_inner.group(1)
-                else:
-                    raise ValueError(f"Could not extract a valid JSON object from the response. Raw: {full_response_text}")
-
-
-        if not json_string:
-             raise ValueError(f"Extracted JSON string is empty. Raw response: {full_response_text}")
-
-        data = json.loads(json_string)
+        data = json.loads(full_response_text)
+        
+        # Ensure all expected keys are present, defaulting to empty strings or None
         expected_keys = ["name", "age", "kupat_cholim", "symptoms", "ai_recommondation"]
         for key in expected_keys:
             if key not in data:
-                data[key] = "" if key != "age" else None
+                # Convert age to string if it's a number, as per your example output
+                if key == "age" and data.get(key) is not None:
+                    data[key] = str(data[key])
+                elif key == "age": # if age is missing or None
+                    data[key] = "" # Default to empty string for template
+                else:
+                    data[key] = data.get(key, "") # Use get for other keys, default to ""
+        
+        # Ensure age is a string for consistency with your example output
+        if "age" in data and data["age"] is not None:
+            data["age"] = str(data["age"])
+        elif "age" not in data or data.get("age") is None : # if age is missing or None
+             data["age"] = ""
+
+
         return data
 
     except json.JSONDecodeError as e:
-        error_msg = f"JSON Decode Error: {e}. Attempted to parse: '{json_string or full_response_text}'"
+        error_msg = f"JSON Decode Error: {e}. Gemini response: '{full_response_text}'"
         st.error(error_msg)
-        return {"error": "Failed to parse JSON from Gemini", "details": error_msg, "name": "", "age": None, "kupat_cholim": "", "symptoms": "", "ai_recommondation": ""}
-    except ValueError as e:
-        error_msg = f"Data Extraction Error: {e}."
+        return {"error": "Failed to parse JSON from Gemini", "details": error_msg, "name": "", "age": "", "kupat_cholim": "", "symptoms": "", "ai_recommondation": ""}
+    except ValueError as e: # Catching empty response
+        error_msg = f"Value Error: {e}. Gemini response: '{full_response_text}'"
         st.error(error_msg)
-        return {"error": "Failed to extract data from Gemini", "details": error_msg, "name": "", "age": None, "kupat_cholim": "", "symptoms": "", "ai_recommondation": ""}
+        return {"error": "Invalid data from Gemini", "details": error_msg, "name": "", "age": "", "kupat_cholim": "", "symptoms": "", "ai_recommondation": ""}
     except Exception as e:
-        # Check for prompt feedback if available in the stream or response object
-        # (This might be more complex with the streaming client API)
-        # if hasattr(stream, 'prompt_feedback') and stream.prompt_feedback:
-        #     st.warning(f"Gemini Prompt Feedback: {stream.prompt_feedback}")
-        error_msg = f"Gemini API call error: {type(e).__name__} - {e}"
+        error_msg = f"Gemini API call error: {type(e).__name__} - {e}. Model: {model_name}. Check if the model is available and the API key is correct."
         st.error(error_msg)
-        return {"error": "Gemini API call failed", "details": error_msg, "name": "", "age": None, "kupat_cholim": "", "symptoms": "", "ai_recommondation": ""}
+        # You might want to inspect `e.args` or other attributes of the exception for more details from the API
+        if hasattr(e, 'response') and e.response:
+            st.error(f"API Response details: {e.response}")
+        return {"error": "Gemini API call failed", "details": error_msg, "name": "", "age": "", "kupat_cholim": "", "symptoms": "", "ai_recommondation": ""}
 
 
 # --- Password Protection ---
@@ -180,7 +151,7 @@ def check_password():
     if st.button("Login", key="login_button"):
         if password_input == app_password:
             st.session_state.password_correct = True
-            st.rerun() # Use st.rerun() for cleaner state update
+            st.rerun()
         else:
             st.error("Password incorrect.")
             st.session_state.password_correct = False
@@ -209,13 +180,12 @@ def main():
             st.warning("Please enter some patient information.")
             st.stop()
 
-        with st.spinner("Processing with Gemini AI..."):
-            # Pass the API key directly to the function
+        with st.spinner(f"Processing with Gemini AI (model: {get_structured_data_from_gemini.__defaults__[0] if get_structured_data_from_gemini.__defaults__ else 'gemini-2.5-flash-preview-05-20'})..."): # Shows model in spinner
             structured_data = get_structured_data_from_gemini(gemini_api_key, patient_info_natural)
 
         if structured_data and "error" not in structured_data:
             st.subheader("2. Structured Patient Data (from Gemini)")
-            st.json(structured_data) # Display the structured data
+            st.json(structured_data)
 
             st.subheader("3. Generate and Download DOCX")
             template_file = "patient_template.docx"
@@ -227,9 +197,10 @@ def main():
 
             try:
                 doc = DocxTemplate(template_file)
+                # Ensure age is a string for the template, even if it was a number
                 context = {
                     "name": structured_data.get("name", ""),
-                    "age": structured_data.get("age", ""),
+                    "age": str(structured_data.get("age", "")), # Ensure age is string
                     "kupat_cholim": structured_data.get("kupat_cholim", ""),
                     "symptoms": structured_data.get("symptoms", ""),
                     "ai_recommondation": structured_data.get("ai_recommondation", "")
@@ -257,4 +228,9 @@ def main():
             st.error("An unexpected error occurred while fetching data from Gemini.")
 
 if __name__ == "__main__":
+    # To make the model name in spinner work if __main__ is run directly (though not typical for streamlit)
+    # This is a bit of a hack for the spinner text if run directly.
+    # In Streamlit, the function will be called from main().
+    if not get_structured_data_from_gemini.__defaults__:
+         get_structured_data_from_gemini.__defaults__ = ("gemini-2.5-flash-preview-05-20",)
     main()
