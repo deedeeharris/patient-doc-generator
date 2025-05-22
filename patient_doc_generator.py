@@ -24,7 +24,7 @@ def get_structured_data_from_gemini(api_key: str, user_input_text: str) -> dict:
     client = genai.Client(api_key=api_key)
 
     # Model from your example
-    model_name = "gemini-1.5-flash-latest" # Using a generally available model.
+    model_name = "gemini-2.5-flash-preview-05-20" # Using a generally available model.
                                           # If "gemini-2.5-flash-preview-05-20" is specifically needed and available, use that.
                                           # The user's example had "gemini-2.5-flash-preview-05-20"
                                           # Let's try to use the user's specified model, but have a fallback.
